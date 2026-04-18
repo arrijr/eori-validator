@@ -3,7 +3,7 @@ import type { InvalidEoriResponse, ValidEoriResponse } from "./types";
 
 const EU_ENDPOINT =
   process.env.EU_CUSTOMS_ENDPOINT ||
-  "https://ec.europa.eu/taxation_customs/dds2/eos/eori_validation.jsp";
+  "https://ec.europa.eu/taxation_customs/dds2/eos/validation/services/validation";
 const HMRC_ENDPOINT =
   process.env.HMRC_EORI_ENDPOINT ||
   "https://api.service.hmrc.gov.uk/customs/traders/eori-checker";
@@ -88,35 +88,56 @@ function buildInvalid(
   return { valid: false, eori, error_code: code, error: message };
 }
 
-function parseEuSoapResponse(xml: string, eori: string, country: string):
-  | ValidEoriResponse
-  | InvalidEoriResponse {
-  const statusMatch = xml.match(/<statusDescr[^>]*>([^<]*)<\/statusDescr>/i);
-  const statusCodeMatch = xml.match(/<status[^>]*>([^<]*)<\/status>/i);
-  const nameMatch = xml.match(/<name[^>]*>([^<]*)<\/name>/i);
-  const streetMatch = xml.match(/<street[^>]*>([^<]*)<\/street>/i);
-  const postMatch = xml.match(/<postalCode[^>]*>([^<]*)<\/postalCode>/i);
-  const cityMatch = xml.match(/<city[^>]*>([^<]*)<\/city>/i);
-  const countryMatch = xml.match(/<country[^>]*>([^<]*)<\/country>/i);
+function decodeXml(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
 
-  const status = (statusCodeMatch?.[1] || statusMatch?.[1] || "").trim().toLowerCase();
-  const isInvalid =
-    status.includes("invalid") ||
-    status.includes("not found") ||
-    status.includes("unknown") ||
-    status === "1";
+function xmlField(xml: string, tag: string): string | null {
+  const m = xml.match(new RegExp(`<(?:[\\w-]+:)?${tag}[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?${tag}>`, "i"));
+  if (!m) return null;
+  const val = decodeXml(m[1]).trim();
+  return val.length > 0 ? val : null;
+}
 
-  if (isInvalid) {
+function parseEuSoapResponse(
+  xml: string,
+  eori: string,
+  country: string,
+): ValidEoriResponse | InvalidEoriResponse {
+  // Isolate the <result>...</result> block to avoid matching outer elements.
+  const resultMatch = xml.match(/<result[^>]*>([\s\S]*?)<\/result>/i);
+  const block = resultMatch ? resultMatch[1] : xml;
+
+  const statusCode = xmlField(block, "status");
+  if (statusCode !== null && statusCode !== "0") {
+    return buildInvalid(eori, "NOT_FOUND", "EORI number not found in EU Customs database");
+  }
+  const statusDescr = xmlField(block, "statusDescr");
+  if (statusDescr && /not\s*valid|invalid|not\s*found/i.test(statusDescr)) {
     return buildInvalid(eori, "NOT_FOUND", "EORI number not found in EU Customs database");
   }
 
-  const parts = [
-    streetMatch?.[1]?.trim(),
-    [postMatch?.[1]?.trim(), cityMatch?.[1]?.trim()].filter(Boolean).join(" "),
-    countryMatch?.[1]?.trim(),
-  ].filter((p) => p && p.length > 0);
-  const address = parts.length > 0 ? parts.join(", ") : null;
-  const name = nameMatch?.[1]?.trim() || null;
+  const name = xmlField(block, "name");
+  const flatAddress = xmlField(block, "address");
+  const street = xmlField(block, "street");
+  const postalCode = xmlField(block, "postalCode");
+  const city = xmlField(block, "city");
+  const countryField = xmlField(block, "country");
+
+  let address: string | null = flatAddress;
+  if (!address) {
+    const parts = [
+      street,
+      [postalCode, city].filter(Boolean).join(" ").trim() || null,
+      countryField,
+    ].filter((p): p is string => !!p && p.length > 0);
+    address = parts.length > 0 ? parts.join(", ") : null;
+  }
 
   return buildValid(eori, country, "EU_CUSTOMS", name, address);
 }
@@ -126,12 +147,12 @@ export async function checkEuCustoms(
 ): Promise<ValidEoriResponse | InvalidEoriResponse> {
   const country = eori.slice(0, 2);
   const soapBody = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eos="http://eos.dgtaxud.ec/">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:eori="http://eori.ws.eos.dds.s/">
   <soapenv:Header/>
   <soapenv:Body>
-    <eos:validateEORI>
-      <eos:eori>${eori}</eos:eori>
-    </eos:validateEORI>
+    <eori:validateEORI>
+      <eori:eori>${eori}</eori:eori>
+    </eori:validateEORI>
   </soapenv:Body>
 </soapenv:Envelope>`;
 
