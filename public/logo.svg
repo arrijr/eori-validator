@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="EORI Validator Pro logo">
+  <rect width="120" height="120" rx="24" fill="#0F172A"/>
+  <g fill="#FACC15">
+    <circle cx="60" cy="28" r="2"/>
+    <circle cx="77" cy="32.5" r="2"/>
+    <circle cx="89" cy="45" r="2"/>
+    <circle cx="93.5" cy="60" r="2"/>
+    <circle cx="89" cy="75" r="2"/>
+    <circle cx="77" cy="87.5" r="2"/>
+    <circle cx="43" cy="32.5" r="2"/>
+    <circle cx="31" cy="45" r="2"/>
+    <circle cx="26.5" cy="60" r="2"/>
+    <circle cx="31" cy="75" r="2"/>
+    <circle cx="43" cy="87.5" r="2"/>
+    <circle cx="60" cy="92" r="2"/>
+  </g>
+  <text x="60" y="68" text-anchor="middle" fill="#FFFFFF" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="22" letter-spacing="1">EORI</text>
+</svg>

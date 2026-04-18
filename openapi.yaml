@@ -1,0 +1,278 @@
+openapi: 3.0.0
+info:
+  title: EORI Validator Pro
+  version: "1.0.0"
+  description: >
+    Validate EU and GB EORI numbers against official customs databases.
+    Returns trader name and address when available. Supports single validation
+    and batch processing of up to 50 EORI numbers.
+
+servers:
+  - url: https://eori-validator.vercel.app/api/v1
+    description: Production
+
+paths:
+  /validate:
+    post:
+      summary: Validate a single EORI number
+      description: >
+        Validates an EORI number against the EU Customs database (EU numbers)
+        or HMRC API (GB numbers). Returns trader details when available.
+        Results are cached for 24h to handle upstream downtime.
+      operationId: validateEori
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - eori
+              properties:
+                eori:
+                  type: string
+                  description: EORI number to validate (spaces are ignored, auto-uppercased)
+                  example: "DE123456789012345"
+      responses:
+        "200":
+          description: Validation result (valid or invalid)
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+              description: Whether the result was served from cache
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ValidEoriResponse"
+                  - $ref: "#/components/schemas/InvalidEoriResponse"
+              examples:
+                valid_eu:
+                  summary: Valid EU EORI
+                  value:
+                    valid: true
+                    eori: "DE123456789012345"
+                    country: "DE"
+                    country_name: "Germany"
+                    trader_name: "Example GmbH"
+                    trader_address: "Musterstraße 1, 10115 Berlin, DE"
+                    source: "EU_CUSTOMS"
+                    cached: false
+                    verified_at: "2026-04-17T10:00:00Z"
+                valid_gb:
+                  summary: Valid GB EORI
+                  value:
+                    valid: true
+                    eori: "GB123456789012"
+                    country: "GB"
+                    country_name: "United Kingdom"
+                    trader_name: "Example Ltd"
+                    trader_address: "1 Example Street, London, EC1A 1BB, GB"
+                    source: "HMRC"
+                    cached: false
+                    verified_at: "2026-04-17T10:00:00Z"
+                invalid:
+                  summary: Invalid EORI
+                  value:
+                    valid: false
+                    eori: "DE000000000000000"
+                    error_code: "NOT_FOUND"
+                    error: "EORI number not found in EU Customs database"
+        "400":
+          description: Bad request — missing or malformed input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Invalid EORI format — must start with 2-letter country code"
+                code: "INVALID_FORMAT"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /validate/batch:
+    post:
+      summary: Validate up to 50 EORI numbers at once
+      description: >
+        Validates a batch of EORI numbers. Results are returned in the same
+        order as the input. Batch size limit depends on your subscription tier.
+      operationId: validateEoriBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - eoris
+              properties:
+                eoris:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  maxItems: 50
+                  description: List of EORI numbers to validate
+                  example:
+                    - "DE123456789012345"
+                    - "GB123456789012"
+                    - "INVALID"
+      responses:
+        "200":
+          description: Batch validation results
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: "#/components/schemas/ValidEoriResponse"
+                        - $ref: "#/components/schemas/InvalidEoriResponse"
+                  total:
+                    type: integer
+                  valid_count:
+                    type: integer
+                  invalid_count:
+                    type: integer
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Batch size exceeds tier limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Batch size 30 exceeds your plan limit of 10."
+                code: "BATCH_LIMIT_EXCEEDED"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  eu_reachable:
+                    type: boolean
+                  gb_reachable:
+                    type: boolean
+                  timestamp:
+                    type: string
+                    format: date-time
+
+components:
+  schemas:
+    ValidEoriResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          example: true
+        eori:
+          type: string
+          example: "DE123456789012345"
+        country:
+          type: string
+          example: "DE"
+        country_name:
+          type: string
+          example: "Germany"
+        trader_name:
+          type: string
+          nullable: true
+          example: "Example GmbH"
+        trader_address:
+          type: string
+          nullable: true
+          example: "Musterstraße 1, 10115 Berlin, DE"
+        source:
+          type: string
+          enum: [EU_CUSTOMS, HMRC]
+          example: "EU_CUSTOMS"
+        cached:
+          type: boolean
+          example: false
+        verified_at:
+          type: string
+          format: date-time
+
+    InvalidEoriResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          example: false
+        eori:
+          type: string
+          example: "DE000000000000000"
+        error_code:
+          type: string
+          enum:
+            - INVALID_FORMAT
+            - NOT_FOUND
+            - SERVICE_UNAVAILABLE
+            - COUNTRY_NOT_SUPPORTED
+          example: "NOT_FOUND"
+        error:
+          type: string
+          example: "EORI number not found in EU Customs database"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          type: object
